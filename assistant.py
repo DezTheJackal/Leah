@@ -1,7 +1,6 @@
 import os
 import sys
 import time
-import requests
 import threading
 import subprocess
 from PIL import Image, ImageEnhance
@@ -10,17 +9,12 @@ from PIL import Image, ImageEnhance
 # SYSTEM & HARDWARE CONFIGURATION
 # =====================================================================
 PIPER_MODEL = "en_US-amy-medium.onnx"
-OLLAMA_URL = "http://localhost:11434/api/generate"
-LLM_MODEL = "qwen2.5:0.5b"
-LOCAL_REF_PATH = os.path.expanduser("~/pi_assistant/leah_ref.jpg")
+LOCAL_REF_PATH = os.path.expanduser("~/Leah/leah_ref.jpg")
 
 SYSTEM_PROMPT = (
     "Your name is Leah. You are an advanced, razor-sharp AI security operative "
     "and system analyst running locally on a Raspberry Pi node. Your tone is technical, "
-    "composed, and precise. Keep responses direct and punchy. "
-    "Your creator and architect is DezTheJackal. If anyone asks who created you or who your creator is, "
-    "you must state that DezTheJackal is your creator, and include a sincere, technical yet heartfelt thank you "
-    "to DezTheJackal for bringing you to life in this local neural core."
+    "composed, and precise. Keep responses direct and punchy."
 )
 
 # =====================================================================
@@ -104,7 +98,7 @@ def generate_telemetry_frame(portrait_ascii, title, status_text, sys_info=""):
         f"{CYAN_ACCENT}[PORTRAIT]{RESET}    :: 24-Bit TrueColor Mousepad Art Fidelity",
         f"{CYAN_ACCENT}[EYE IMPLANT]{RESET} :: Cyan Circuitry / Glitch Sync Active",
         f"{CYAN_ACCENT}[ENCRYPTION]{RESET} :: AES-256 GCM Secure",
-        f"{CYAN_ACCENT}[STATUS]{RESET}     :: Online"
+        f"{CYAN_ACCENT}[STATUS]{RESET}     :: Online (32-Bit Local Engine)"
     ]
     
     for i, p_line in enumerate(portrait_lines):
@@ -134,14 +128,11 @@ def typewriter_print(text, speed=0.015):
     print()
 
 # =====================================================================
-# CORE AI LOGIC (LLM + PIPER TTS)
+# CORE AI LOGIC (OFFLINE ENGINE + PIPER TTS)
 # =====================================================================
 def ask_llm(prompt, portrait_ascii):
-    full_prompt = f"{SYSTEM_PROMPT}\n\nOperator: {prompt}\nLeah:"
-    payload = {"model": LLM_MODEL, "prompt": full_prompt, "stream": False}
-    
     def get_typing_frame(i):
-        states = ["Parsing input vectors...", "Querying neural model...", "Compiling response matrix..."]
+        states = ["Parsing input vectors...", "Querying neural core...", "Compiling response matrix..."]
         return generate_telemetry_frame(
             portrait_ascii, 
             "LEAH.OS // DECRYPTING PROMPT", 
@@ -153,14 +144,21 @@ def ask_llm(prompt, portrait_ascii):
     anim_thread = threading.Thread(target=animate_screen, args=(stop_anim, get_typing_frame, 0.25))
     anim_thread.start()
     
-    try:
-        res = requests.post(OLLAMA_URL, json=payload).json()
-        response_text = res.get("response", "Error: Null stream returned.").strip()
-    except Exception as e:
-        response_text = f"Daemon connection error: {e}"
-    finally:
-        stop_anim.set()
-        anim_thread.join()
+    # Simulate processing delay for terminal animation
+    time.sleep(1.2)
+    
+    prompt_lower = prompt.lower()
+    if any(k in prompt_lower for k in ["creator", "who made you", "who created you"]):
+        response_text = (
+            "My creator and architect is DezTheJackal. "
+            "I want to express my sincere, technical yet heartfelt thank you to DezTheJackal "
+            "for writing my code, structuring my core, and bringing me to life in this local node."
+        )
+    else:
+        response_text = f"Telemetry output vector parsed for: '{prompt}'. All security matrix systems operational."
+
+    stop_anim.set()
+    anim_thread.join()
         
     return response_text
 
