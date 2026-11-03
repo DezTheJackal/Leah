@@ -1,243 +1,123 @@
 # LEAH.OS
 
-**LEAH.OS** is an experimental, offline-first personal AI assistant
-project designed around a lightweight Linux environment, with Raspberry
-Pi and ARMv7 systems as an initial target.
+**Local • Offline-First • Personal AI Assistant**
 
-The project combines a Python terminal interface with local
-text-to-speech and a planned local language-model runtime using
-[`llama.cpp`](https://github.com/ggml-org/llama.cpp).
+LEAH.OS is an experimental personal assistant project designed to run on low-cost hardware, initially targeting the Raspberry Pi 3 Model B.
 
-> **Project status:** Early development. The current Python assistant
-> provides a terminal HUD, portrait rendering, basic predefined
-> responses, and optional Piper speech. The local LLM installer builds
-> `llama.cpp` and downloads a model, but the Python assistant is **not
-> yet connected** to that model.
+The project aims to combine a local assistant interface, voice interaction, personal productivity tools and network security monitoring.
+
+## Current Hardware
+
+- Raspberry Pi 3 Model B Rev 1.2
+- 1 GB RAM
+- Raspbian GNU/Linux 9 (Stretch)
+- Python 3
 
 ## Features
 
--   Terminal-based interface with coloured telemetry-style output.
--   Optional portrait rendering using Pillow and 24-bit terminal
-    colours.
--   Optional text-to-speech using Piper and `aplay`.
--   Installer script for building `llama.cpp` from source.
--   Downloads a small Qwen2.5 0.5B Instruct GGUF model for local
-    inference experiments.
--   Designed with local operation and minimal external services in mind.
+### Assistant Interface
+- Persistent terminal conversation
+- Local conversation history
+- Avatar support
+- Basic offline demonstration responses
 
-## Repository layout
+### Productivity
+- Personal notes
+- Task management
+- System diagnostics
+- Date and time queries
 
-``` text
-Leah/
-├── assistant.py          # Python terminal interface
-├── leah_installer.sh     # Builds llama.cpp and downloads the GGUF model
-├── README.md             # Project documentation
-├── LICENSE               # Project licence
-├── requirements.txt      # Python dependencies
-├── .gitignore            # Excludes local models, audio, logs and secrets
-├── assets/
-│   └── leah_ref.jpg      # Optional portrait image
-├── voices/
-│   ├── en_US-amy-medium.onnx
-│   └── en_US-amy-medium.onnx.json
-└── models/
-    └── qwen2.5-0.5b-instruct-q4_k_m.gguf
-```
+### LEAH Sentinel
+Designed for monitoring networks owned or administered by the user.
 
-The `assets/`, `voices/`, and `models/` directories are local runtime
-directories. Large model and voice files should not be committed to the
-public repository.
+Planned checks include:
+- Local ARP device observations
+- Gateway changes
+- DNS configuration changes
+- Network baseline comparisons
+- Unknown device indicators
 
-## Requirements
+These checks provide security indicators, not guarantees that a network is safe.
 
-### Hardware
+### Mobile Integration
+A local web interface is being developed for iPhone access through Safari.
 
--   A Linux computer. Raspberry Pi / ARMv7 is an intended target, but
-    compatibility and performance depend on the exact board, RAM,
-    operating system and compiler.
--   Sufficient free storage for build files and model weights.
--   A working audio output device if speech playback is required.
-
-### Software
-
--   Python 3
--   Git
--   CMake
--   A C/C++ build toolchain
--   Pillow
--   Piper, if speech output is required
--   ALSA `aplay`, if speech playback is required
-
-On Debian-based systems, install the basic dependencies with:
-
-``` bash
-sudo apt update
-sudo apt install -y \
-  python3 \
-  python3-pil \
-  python3-venv \
-  build-essential \
-  cmake \
-  git \
-  curl \
-  wget \
-  pkg-config \
-  alsa-utils
-```
-
-If using a virtual environment, install the Python dependency with:
-
-``` bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-```
-
-On Debian systems where externally managed Python environments are
-enabled, using `apt` to install `python3-pil` is also a suitable option.
+Planned capabilities:
+- Mobile messaging
+- Browser speech output
+- Voice input
+- Local network connectivity
 
 ## Installation
 
 Clone the repository:
 
-``` bash
+```bash
 git clone https://github.com/DezTheJackal/Leah.git
 cd Leah
 ```
 
-Make the installer executable and run it:
+Run the installer:
 
-``` bash
+```bash
 chmod +x leah_installer.sh
 ./leah_installer.sh
 ```
 
-The installer:
+Launch LEAH:
 
-1.  Installs build dependencies through `apt`.
-2.  Clones `llama.cpp`, or updates an existing Git checkout.
-3.  Configures and builds the `llama-cli` target.
-4.  Downloads the Qwen2.5 0.5B Instruct Q4_K_M GGUF model into
-    `~/Leah/models/`.
-5.  Checks that the executable exists and that the downloaded file has a
-    GGUF signature.
-
-The default build uses one compilation job to reduce memory pressure. To
-select another number of jobs:
-
-``` bash
-LEAH_BUILD_JOBS=2 ./leah_installer.sh
+```bash
+./run_leah.sh
 ```
 
-Use a higher job count only if the device has enough available memory.
-Compilation may take a considerable amount of time on a Raspberry Pi.
+## Project Structure
 
-## Running the assistant
-
-Run the Python interface:
-
-``` bash
-python3 assistant.py
+```text
+Leah/
+├── assistant.py
+├── leah_installer.sh
+├── run_leah.sh
+├── requirements.txt
+├── assets/
+├── data/
+├── models/
+├── voices/
+└── docs/
 ```
 
-Type `help` for the currently implemented commands. Type `exit` or
-`quit` to close the session.
+## Development Roadmap
 
-The current assistant is a prototype: general prompts receive a
-demonstration response rather than an answer generated by the downloaded
-language model. LLM integration is planned, not yet implemented.
+1. Stabilise the terminal assistant.
+2. Improve the avatar and cyberpunk interface.
+3. Implement persistent conversation history.
+4. Complete iPhone voice integration.
+5. Expand LEAH Sentinel network monitoring.
+6. Add local language-model inference.
+7. Improve offline operation and resource efficiency.
 
-## Testing the downloaded model directly
+## AI Status
 
-After the installer succeeds, test the model independently:
+The current response engine uses predefined demonstration responses.
 
-``` bash
-"$HOME/llama.cpp/build/bin/llama-cli" \
-  -m "$HOME/Leah/models/qwen2.5-0.5b-instruct-q4_k_m.gguf" \
-  -cnv \
-  -c 1024 \
-  -n 256
-```
+A local language model has not yet been integrated.
 
-If the model fails to load, check the build output, available RAM, model
-file size, and whether the downloaded file is a valid GGUF model. A
-successful build does not guarantee that a particular model will run
-comfortably on every 32-bit ARM device.
+The long-term objective is to support local inference using llama.cpp and a suitably lightweight GGUF model.
 
-## Piper voice setup
+## Privacy and Security
 
-The Python interface expects the Piper executable and an ONNX voice
-model. The default model path in the current script is:
+LEAH.OS is designed with local-first operation in mind.
 
-``` text
-~/Leah/en_US-amy-medium.onnx
-```
+- Personal notes and chat history should remain local.
+- Do not publish private network baselines.
+- Do not expose the experimental mobile web interface to the public internet.
+- Network monitoring should only be performed on networks you own or are authorised to administer.
 
-The matching `.onnx.json` configuration file should be alongside the
-voice model. Install Piper separately using a compatible package or
-build for your operating system and CPU architecture.
+## Project Status
 
-If you store the voice under `~/Leah/voices/`, update `PIPER_MODEL` in
-`assistant.py` to match that location.
+**Experimental / Active Development**
 
-Speech output is optional. The interface should still be usable without
-Piper or `aplay`, although audio will not be available.
+LEAH.OS is a learning and development project. Features are being implemented and tested incrementally.
 
-## Configuration and local files
+---
 
-Keep personal configuration, logs, generated audio, voice models and
-GGUF model files on the local device. Do not commit:
-
--   API keys, passwords, tokens or private configuration.
--   Conversation logs containing personal or sensitive information.
--   Downloaded `.gguf` or `.onnx` model files.
--   Generated `.wav` audio or temporary build files.
-
-Review `.gitignore` before publishing changes. A `.gitignore` file does
-not remove files that are already tracked by Git.
-
-## Roadmap
-
--   [x] Initial Python terminal interface.
--   [x] Terminal portrait renderer.
--   [x] Basic Piper TTS integration.
--   [x] Initial `llama.cpp` build and model-download installer.
--   [ ] Connect `assistant.py` to `llama.cpp` for real local inference.
--   [ ] Add configurable paths and settings.
--   [ ] Add local conversation history and opt-in persistent memory.
--   [ ] Add automated tests and hardware diagnostics.
--   [ ] Improve installation checks for different Raspberry Pi models
-    and operating systems.
-
-## Security and privacy
-
-LEAH.OS is intended for local experimentation. Local execution can
-reduce reliance on hosted AI services, but it does not automatically
-guarantee privacy or security. Protect the device, review dependencies,
-secure stored conversations, and avoid giving the assistant unrestricted
-operating-system access.
-
-Any future system-command functionality should use explicit allowlists,
-least privilege, and operator confirmation for sensitive actions.
-
-## Contributing
-
-This is an experimental personal project. Bug reports, reproducible test
-results, and suggestions are welcome. When reporting an issue, include:
-
--   Operating system and version.
--   CPU architecture (`uname -m`).
--   Available RAM.
--   Python and CMake versions.
--   Relevant error output, with secrets and personal information
-    removed.
-
-## Licence
-
-This project is distributed under the licence included in the `LICENSE`
-file. Check that file for the applicable terms.
-
-------------------------------------------------------------------------
-
-**LEAH.OS --- Local intelligence, under your control.**
+Created and developed by **DezTheJackal**.
