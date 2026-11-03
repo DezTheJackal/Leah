@@ -1,608 +1,850 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+LEAH.OS v4.0 - Offline Assistant
+Raspberry Pi 3 Model B / Raspbian Stretch
+
+Features:
+- Persistent terminal chat
+- Local chat history
+- Avatar support (optional Pillow)
+- System diagnostics
+- Read-only network diagnostics
+- Network device baseline
+- Notes and tasks
+- Reminders
+- Local iPhone web interface
+- Browser speech output
+- No LLM connected yet
+"""
 
 import os
 import sys
+import json
 import time
+import socket
 import shutil
 import threading
 import subprocess
+import webbrowser
 
-from PIL import Image, ImageEnhance
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urlparse, parse_qs
 
-# ============================================================
-# LEAH.OS - SYSTEM CONFIGURATION
-# Raspberry Pi / ARMv7 / 32-bit compatible
-# ============================================================
-
-PIPER_MODEL = os.path.expanduser("en_US-amy-medium.onnx")
-LOCAL_REF_PATH = os.path.expanduser("~/Leah/leah_ref.jpg")
-OUTPUT_WAV = os.path.abspath("response.wav")
-
-TARGET_WIDTH = 72
-ANIMATION_SPEED = 0.25
 
 # ============================================================
-# PILLOW COMPATIBILITY
+# CONFIGURATION
 # ============================================================
 
-try:
-    RESAMPLE_METHOD = Image.Resampling.LANCZOS
-except AttributeError:
-    RESAMPLE_METHOD = getattr(Image, "LANCZOS", Image.BICUBIC)
+HOME = os.path.expanduser("~")
+LEAH_DIR = os.path.join(HOME, "Leah")
 
-# ============================================================
-# TERMINAL COLORS
-# ============================================================
+DATA_DIR = os.path.join(LEAH_DIR, "data")
+ASSET_DIR = os.path.join(LEAH_DIR, "assets")
 
+CHAT_FILE = os.path.join(DATA_DIR, "chat.json")
+NOTES_FILE = os.path.join(DATA_DIR, "notes.json")
+TASKS_FILE = os.path.join(DATA_DIR, "tasks.json")
+BASELINE_FILE = os.path.join(DATA_DIR, "network_baseline.json")
+
+AVATAR_FILE = os.path.join(ASSET_DIR, "leah_avatar.jpg")
+
+WEB_HOST = "0.0.0.0"
+WEB_PORT = 8080
+
+VERSION = "4.0"
+
+PURPLE = "\033[38;5;135m"
+CYAN = "\033[38;5;45m"
+GREEN = "\033[38;5;46m"
+YELLOW = "\033[38;5;220m"
+RED = "\033[38;5;196m"
+WHITE = "\033[97m"
 RESET = "\033[0m"
-BOLD = "\033[1m"
 
-CYAN_ACCENT = "\033[38;2;0;221;251m"
-MAGENTA_ACCENT = "\033[38;2;229;43;213m"
-AMBER_ACCENT = "\033[38;2;255;165;0m"
-GREEN_ACCENT = "\033[38;2;0;255;100m"
-WHITE_ACCENT = "\033[38;2;220;220;235m"
-
-def clear_screen():
-    sys.stdout.write("\033[H\033[J")
-    sys.stdout.flush()
-
-
-def rgb_ansi_fg(r, g, b):
-    return "\033[38;2;{};{};{}m".format(r, g, b)
+os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(ASSET_DIR, exist_ok=True)
 
 
 # ============================================================
-# DIRECTORY AND REFERENCE IMAGE
+# STORAGE
 # ============================================================
 
-def ensure_reference_image():
-
-    directory = os.path.dirname(LOCAL_REF_PATH)
-
+def load_json(path, default):
     try:
-        os.makedirs(directory, exist_ok=True)
+        with open(path, "r") as file:
+            return json.load(file)
+    except (IOError, ValueError):
+        return default
 
-        if not os.path.exists(LOCAL_REF_PATH):
-            img = Image.new(
-                "RGB",
-                (300, 300),
-                color=(5, 5, 10)
-            )
 
-            img.save(LOCAL_REF_PATH)
+def save_json(path, data):
+    temporary = path + ".tmp"
 
-            print("[LEAH] Fallback reference image created.")
+    with open(temporary, "w") as file:
+        json.dump(data, file, indent=2)
 
-    except OSError as error:
-        print("[LEAH] Image directory error:", error)
+    os.rename(temporary, path)
+
+
+def timestamp():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def save_message(role, message):
+    history = load_json(CHAT_FILE, [])
+
+    history.append({
+        "time": timestamp(),
+        "role": role,
+        "message": message
+    })
+
+    # Keep the most recent 200 messages.
+    history = history[-200:]
+
+    save_json(CHAT_FILE, history)
 
 
 # ============================================================
-# IMAGE TO TRUECOLOR TERMINAL RENDERER
+# SYSTEM INFORMATION
 # ============================================================
 
-def image_to_truecolor_blocks(image_path, target_width=72):
-
-    ensure_reference_image()
-
-    if not os.path.isfile(image_path):
-        return "[Reference portrait not found]"
-
+def run_command(command):
     try:
-
-        with Image.open(image_path) as source:
-
-            img = source.convert("RGB")
-
-        img = ImageEnhance.Contrast(img).enhance(1.6)
-        img = ImageEnhance.Sharpness(img).enhance(1.7)
-
-        width, height = img.size
-
-        target_height = max(
-            1,
-            int(target_width * (height / float(width)) * 0.48)
+        result = subprocess.check_output(
+            command,
+            stderr=subprocess.STDOUT
         )
 
-        img = img.resize(
-            (target_width, target_height),
-            RESAMPLE_METHOD
-        )
+        return result.decode(
+            "utf-8", errors="replace"
+        ).strip()
 
-        pixels = img.load()
+    except Exception:
+        return "Unavailable"
 
-        lines = []
 
-        blocks = [" ", "░", "▒", "▓", "█"]
+def system_status():
+    return {
+        "hostname": socket.gethostname(),
+        "architecture": run_command(["uname", "-m"]),
+        "os": run_command(["uname", "-r"]),
+        "uptime": run_command(["uptime", "-p"]),
+        "memory": run_command(["free", "-h"]),
+        "storage": run_command(["df", "-h", "/"]),
+        "temperature": run_command([
+            "bash", "-c",
+            "vcgencmd measure_temp"
+        ])
+    }
 
-        for y in range(target_height):
 
-            line = []
+def display_status():
+    status = system_status()
 
-            for x in range(target_width):
+    print(PURPLE + "\n========== LEAH SYSTEM STATUS ==========" + RESET)
 
-                r, g, b = pixels[x, y]
+    for key, value in status.items():
+        print(CYAN + key.upper() + RESET)
+        print(value)
+        print()
 
-                brightness = int(
-                    0.299 * r +
-                    0.587 * g +
-                    0.114 * b
+    print(PURPLE + "========================================" + RESET)
+
+
+# ============================================================
+# NETWORK SENTINEL
+# ============================================================
+
+def get_gateway():
+    """
+    Read the default gateway from /proc/net/route.
+    """
+
+    try:
+        with open("/proc/net/route", "r") as file:
+            lines = file.readlines()
+
+        for line in lines[1:]:
+            parts = line.split()
+
+            if len(parts) >= 4 and parts[1] == "00000000":
+                gateway_hex = parts[2]
+
+                gateway = socket.inet_ntoa(
+                    bytes.fromhex(gateway_hex)[::-1]
                 )
 
-                block_index = min(
-                    int((brightness / 255.0) * 4),
-                    4
+                return gateway
+
+    except Exception:
+        pass
+
+    return "Unknown"
+
+
+def get_dns_servers():
+    servers = []
+
+    try:
+        with open("/etc/resolv.conf", "r") as file:
+            for line in file:
+                parts = line.split()
+
+                if len(parts) >= 2 and parts[0] == "nameserver":
+                    servers.append(parts[1])
+
+    except IOError:
+        pass
+
+    return servers
+
+
+def get_arp_devices():
+    """
+    Read the kernel ARP table.
+    This does not actively scan other networks.
+    """
+
+    devices = []
+
+    try:
+        with open("/proc/net/arp", "r") as file:
+            lines = file.readlines()
+
+        for line in lines[1:]:
+            parts = line.split()
+
+            if len(parts) >= 6:
+                devices.append({
+                    "ip": parts[0],
+                    "mac": parts[3],
+                    "interface": parts[5]
+                })
+
+    except IOError:
+        pass
+
+    return devices
+
+
+def network_snapshot():
+    return {
+        "time": timestamp(),
+        "gateway": get_gateway(),
+        "dns": get_dns_servers(),
+        "devices": get_arp_devices()
+    }
+
+
+def sentinel_scan():
+    print(PURPLE + "\n========== LEAH SENTINEL ==========" + RESET)
+
+    current = network_snapshot()
+
+    print(CYAN + "Default gateway:" + RESET,
+          current["gateway"])
+
+    print(CYAN + "\nDNS servers:" + RESET)
+
+    if current["dns"]:
+        for server in current["dns"]:
+            print("  " + server)
+    else:
+        print("  No DNS servers found.")
+
+    print(CYAN + "\nDevices in local ARP table:" + RESET)
+
+    if current["devices"]:
+        for device in current["devices"]:
+            print(
+                "  {0} | {1} | {2}".format(
+                    device["ip"],
+                    device["mac"],
+                    device["interface"]
                 )
-
-                character = blocks[block_index]
-
-                if block_index == 0:
-                    line.append(" ")
-                else:
-                    line.append(
-                        rgb_ansi_fg(r, g, b) + character
-                    )
-
-            lines.append("".join(line) + RESET)
-
-        return "\n".join(lines)
-
-    except Exception as error:
-
-        return "[Portrait rendering error: {}]".format(error)
-
-
-# ============================================================
-# TELEMETRY INTERFACE
-# ============================================================
-
-def generate_telemetry_frame(
-    portrait_ascii,
-    title,
-    status_text,
-    sys_info=""
-):
-
-    lines = []
-
-    border = "═" * 97
-
-    lines.append(
-        MAGENTA_ACCENT + "╔" + border + "╗" + RESET
-    )
-
-    lines.append(
-        MAGENTA_ACCENT + "║ " +
-        CYAN_ACCENT + title +
-        MAGENTA_ACCENT + " " +
-        status_text +
-        " ║" + RESET
-    )
-
-    lines.append(
-        MAGENTA_ACCENT + "╠" + border + "╣" + RESET
-    )
-
-    portrait_lines = (
-        portrait_ascii.split("\n")
-        if portrait_ascii else []
-    )
-
-    hud_info = [
-
-        "[NODE]        :: Pi-Local ARMv7",
-
-        "[IDENT]       :: Leah v3.5 Neural Core",
-
-        "[SYSTEM]      :: " + sys_info,
-
-        "[PORTRAIT]    :: 24-Bit TrueColor Matrix",
-
-        "[EYE IMPLANT] :: Cyan Circuitry / Glitch Sync",
-
-        "[ENCRYPTION]  :: AES-256 GCM Secure",
-
-        "[STATUS]      :: Online / Offline Fallback Ready"
-    ]
-
-    for i, portrait_line in enumerate(portrait_lines):
-
-        info = hud_info[i] if i < len(hud_info) else ""
-
-        lines.append(
-            "  " + portrait_line + "   " +
-            CYAN_ACCENT + info + RESET
-        )
-
-    lines.append(
-        MAGENTA_ACCENT + "╚" + border + "╝" + RESET
-    )
-
-    return "\n".join(lines)
-
-
-# ============================================================
-# ANIMATION ENGINE
-# ============================================================
-
-def animate_screen(stop_event, frame_func, speed=0.25):
-
-    index = 0
-
-    try:
-
-        while not stop_event.is_set():
-
-            clear_screen()
-
-            sys.stdout.write(frame_func(index))
-            sys.stdout.flush()
-
-            index += 1
-
-            stop_event.wait(speed)
-
-    finally:
-
-        sys.stdout.write(RESET)
-        sys.stdout.flush()
-
-
-def stop_animation(stop_event, thread):
-
-    stop_event.set()
-
-    if thread.is_alive():
-        thread.join(timeout=3)
-
-    clear_screen()
-
-
-# ============================================================
-# TYPEWRITER EFFECT
-# ============================================================
-
-def typewriter_print(text, speed=0.015):
-
-    for character in text:
-
-        sys.stdout.write(
-            WHITE_ACCENT + character + RESET
-        )
-
-        sys.stdout.flush()
-
-        time.sleep(speed)
-
-    print()
-
-
-# ============================================================
-# LEAH RESPONSE ENGINE
-# ============================================================
-
-def ask_llm(prompt, portrait_ascii):
-
-    def get_typing_frame(index):
-
-        states = [
-            "Parsing input vectors...",
-            "Querying neural core...",
-            "Compiling response matrix..."
-        ]
-
-        return generate_telemetry_frame(
-            portrait_ascii,
-            "LEAH.OS // DECRYPTING PROMPT",
-            "{} PROCESSING".format(
-                AMBER_ACCENT + "◐"
-            ) + RESET,
-            states[index % len(states)]
-        )
-
-    stop_event = threading.Event()
-
-    animation_thread = threading.Thread(
-        target=animate_screen,
-        args=(stop_event, get_typing_frame, ANIMATION_SPEED)
-    )
-
-    animation_thread.daemon = True
-    animation_thread.start()
-
-    try:
-
-        time.sleep(0.8)
-
-        prompt_lower = prompt.lower()
-
-        if any(keyword in prompt_lower for keyword in [
-            "creator",
-            "who made you",
-            "who created you",
-            "your developer",
-            "your architect"
-        ]):
-
-            response_text = (
-                "My creator and architect is DezTheJackal. "
-                "I want to express my sincere, technical yet "
-                "heartfelt thank you to DezTheJackal for writing "
-                "my code, structuring my core, and bringing me "
-                "to life in this local node."
             )
+    else:
+        print("  No devices currently recorded.")
 
-        elif prompt_lower in ["hello", "hi", "hey", "hello leah"]:
+    baseline = load_json(BASELINE_FILE, None)
 
-            response_text = (
-                "Hello, operator. Leah neural core is online. "
-                "All local telemetry systems are operational."
-            )
+    if baseline is None:
+        print(YELLOW + "\nNo network baseline exists." + RESET)
+        print("Use 'baseline' after checking your own network.")
+    else:
+        print(CYAN + "\nBaseline comparison:" + RESET)
 
-        elif any(keyword in prompt_lower for keyword in [
-            "system status",
-            "status report",
-            "diagnostics"
-        ]):
-
-            response_text = (
-                "LEAH.OS diagnostic report: "
-                "Core interface operational. "
-                "Portrait renderer available. "
-                "Audio subsystem awaiting verification. "
-                "External AI inference is not currently connected."
-            )
-
-        elif prompt_lower in ["help", "commands"]:
-
-            response_text = (
-                "Available commands: hello, system status, "
-                "creator, diagnostics, help, exit. "
-                "General AI conversation requires an LLM connection."
-            )
-
+        if current["gateway"] != baseline["gateway"]:
+            print(RED + "[WARNING] Gateway has changed." + RESET)
         else:
+            print(GREEN + "[OK] Gateway unchanged." + RESET)
 
-            response_text = (
-                "Local neural core received your input: '{}'. "
-                "The current response engine is running in "
-                "offline demonstration mode. Connect a local "
-                "LLM to enable intelligent conversation."
-            ).format(prompt)
+        if current["dns"] != baseline["dns"]:
+            print(RED + "[WARNING] DNS configuration has changed." + RESET)
+        else:
+            print(GREEN + "[OK] DNS configuration unchanged." + RESET)
 
-        return response_text
-
-    finally:
-
-        stop_animation(stop_event, animation_thread)
-
-
-# ============================================================
-# PIPER TEXT-TO-SPEECH ENGINE
-# ============================================================
-
-def speak(text, portrait_ascii):
-
-    if not shutil.which("piper"):
-
-        print("[AUDIO] Piper is not installed.")
-        return False
-
-    if not shutil.which("aplay"):
-
-        print("[AUDIO] aplay is not installed.")
-        return False
-
-    if not os.path.isfile(PIPER_MODEL):
-
-        print("[AUDIO] Piper ONNX model not found:")
-        print(PIPER_MODEL)
-        return False
-
-    try:
-
-        piper_process = subprocess.run(
-            [
-                "piper",
-                "-m", PIPER_MODEL,
-                "--output_file", OUTPUT_WAV
-            ],
-            input=text,
-            universal_newlines=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            timeout=120
+        old_macs = set(
+            item["mac"] for item in baseline["devices"]
+            if item["mac"] != "00:00:00:00:00:00"
         )
 
-        if piper_process.returncode != 0:
+        new_macs = set(
+            item["mac"] for item in current["devices"]
+            if item["mac"] != "00:00:00:00:00:00"
+        )
 
-            print("[AUDIO] Piper error:")
-            print(piper_process.stderr[-1000:])
-            return False
+        for mac in new_macs - old_macs:
+            print(YELLOW + "[NEW DEVICE] " + mac + RESET)
 
-        if not os.path.isfile(OUTPUT_WAV):
+        for mac in old_macs - new_macs:
+            print(YELLOW + "[DEVICE NOT CURRENTLY SEEN] " + mac + RESET)
 
-            print("[AUDIO] Audio output was not generated.")
-            return False
+    print(PURPLE + "\n===================================" + RESET)
 
-        def get_talking_frame(index):
+    print(
+        YELLOW +
+        "Note: These are indicators, not proof of network compromise."
+        + RESET
+    )
 
-            waves = [
-                "░▒▓ ░▒▓ ░▒▓",
-                "▓▒░ ▓▒░ ▓▒░"
-            ]
 
-            return generate_telemetry_frame(
-                portrait_ascii,
-                "LEAH.OS // AUDIO TRANSMISSION",
-                GREEN_ACCENT + "SPEAKING " +
-                waves[index % 2] + RESET,
-                "Piper ONNX PCM Output"
+def save_network_baseline():
+    current = network_snapshot()
+
+    save_json(BASELINE_FILE, current)
+
+    print(GREEN + "\nNetwork baseline saved." + RESET)
+    print("Only use this after verifying your own network devices.")
+
+
+# ============================================================
+# NOTES AND TASKS
+# ============================================================
+
+def add_note(note):
+    notes = load_json(NOTES_FILE, [])
+
+    notes.append({
+        "time": timestamp(),
+        "note": note
+    })
+
+    save_json(NOTES_FILE, notes)
+
+    print(GREEN + "Note saved." + RESET)
+
+
+def show_notes():
+    notes = load_json(NOTES_FILE, [])
+
+    print(PURPLE + "\n========== NOTES ==========" + RESET)
+
+    if not notes:
+        print("No notes saved.")
+        return
+
+    for index, note in enumerate(notes, 1):
+        print(
+            "{0}. [{1}] {2}".format(
+                index, note["time"], note["note"]
             )
-
-        stop_event = threading.Event()
-
-        animation_thread = threading.Thread(
-            target=animate_screen,
-            args=(stop_event, get_talking_frame, 0.15)
         )
 
-        animation_thread.daemon = True
-        animation_thread.start()
+
+def add_task(task):
+    tasks = load_json(TASKS_FILE, [])
+
+    tasks.append({
+        "task": task,
+        "created": timestamp(),
+        "completed": False
+    })
+
+    save_json(TASKS_FILE, tasks)
+
+    print(GREEN + "Task added." + RESET)
+
+
+def show_tasks():
+    tasks = load_json(TASKS_FILE, [])
+
+    print(PURPLE + "\n========== TASKS ==========" + RESET)
+
+    if not tasks:
+        print("No tasks.")
+        return
+
+    for index, task in enumerate(tasks, 1):
+        state = "DONE" if task["completed"] else "PENDING"
+
+        print(
+            "{0}. [{1}] {2}".format(
+                index, state, task["task"]
+            )
+        )
+
+
+def complete_task(number):
+    tasks = load_json(TASKS_FILE, [])
+
+    if number < 1 or number > len(tasks):
+        print("Invalid task number.")
+        return
+
+    tasks[number - 1]["completed"] = True
+
+    save_json(TASKS_FILE, tasks)
+
+    print(GREEN + "Task completed." + RESET)
+
+
+# ============================================================
+# RESPONSE ENGINE - DEMO MODE
+# ============================================================
+
+def ask_leah(prompt):
+    text = prompt.lower().strip()
+
+    if text in ["hello", "hi", "hey", "hello leah"]:
+        return "Hello, operator. LEAH is online. How can I help?"
+
+    if "creator" in text or "who made you" in text:
+        return "My creator is DezTheJackal."
+
+    if "time" in text:
+        return "The current local time is " + datetime.now().strftime("%H:%M:%S")
+
+    if "date" in text:
+        return "Today's date is " + datetime.now().strftime("%d %B %Y")
+
+    if "network" in text or "sentinel" in text:
+        return "You can use the sentinel command to inspect your local network."
+
+    if "status" in text or "diagnostic" in text:
+        return "Use the status command for Raspberry Pi diagnostics."
+
+    if "help" in text:
+        return "Use the help command to see my available functions."
+
+    return (
+        "I received your message: '{0}'. "
+        "My current response engine is in demonstration mode. "
+        "My local LLM has not been connected yet."
+    ).format(prompt)
+
+
+# ============================================================
+# IPHONE WEB INTERFACE
+# ============================================================
+
+HTML_PAGE = r"""
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="utf-8">
+<title>LEAH.OS</title>
+
+<style>
+body {
+    background: #080510;
+    color: #eee;
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 18px;
+}
+h1 { color: #bd72ff; }
+.panel {
+    border: 1px solid #8e42d9;
+    border-radius: 14px;
+    padding: 14px;
+    margin-bottom: 14px;
+    background: #120b20;
+}
+#chat {
+    height: 55vh;
+    overflow-y: auto;
+}
+.message {
+    padding: 12px;
+    border-radius: 10px;
+    margin: 10px 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.leah {
+    background: #28133e;
+    border: 1px solid #9b54df;
+}
+.user {
+    background: #102747;
+    border: 1px solid #347bc4;
+    text-align: right;
+}
+input {
+    width: 72%;
+    padding: 13px;
+    background: #080510;
+    color: white;
+    border: 1px solid #9b54df;
+    border-radius: 8px;
+}
+button {
+    background: #8e42d9;
+    color: white;
+    border: 0;
+    border-radius: 8px;
+    padding: 13px;
+    margin: 3px;
+}
+small { color: #a98bc8; }
+</style>
+</head>
+
+<body>
+
+<h1>LEAH.OS ♡</h1>
+<small>Personal assistant // Raspberry Pi local node</small>
+
+<div class="panel">
+    <strong>Local connection</strong>
+    <p>Connected to your LEAH assistant.</p>
+</div>
+
+<div class="panel" id="chat">
+    <div class="message leah">
+        Hello! I'm LEAH. I'm ready to help.
+    </div>
+</div>
+
+<div class="panel">
+    <input id="message" placeholder="Talk to LEAH...">
+    <button onclick="sendMessage()">Send</button>
+    <button onclick="speakLast()">Listen</button>
+</div>
+
+<div class="panel">
+    <button onclick="quickCommand('status')">System status</button>
+    <button onclick="quickCommand('sentinel')">Network check</button>
+    <button onclick="quickCommand('help')">Help</button>
+</div>
+
+<script>
+var lastReply = "";
+
+function addMessage(text, cls) {
+    var chat = document.getElementById("chat");
+    var item = document.createElement("div");
+
+    item.className = "message " + cls;
+    item.textContent = text;
+
+    chat.appendChild(item);
+    chat.scrollTop = chat.scrollHeight;
+}
+
+function sendMessage() {
+    var input = document.getElementById("message");
+    var text = input.value.trim();
+
+    if (!text) return;
+
+    input.value = "";
+    addMessage(text, "user");
+
+    fetch("/chat", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({message: text})
+    })
+    .then(function(response) { return response.json(); })
+    .then(function(data) {
+        lastReply = data.reply;
+        addMessage(data.reply, "leah");
+    })
+    .catch(function() {
+        addMessage("Could not connect to LEAH.", "leah");
+    });
+}
+
+function quickCommand(command) {
+    document.getElementById("message").value = command;
+    sendMessage();
+}
+
+function speakLast() {
+    if (!lastReply || !window.speechSynthesis) return;
+
+    window.speechSynthesis.cancel();
+
+    var utterance = new SpeechSynthesisUtterance(lastReply);
+    utterance.lang = "en-US";
+
+    window.speechSynthesis.speak(utterance);
+}
+
+document.getElementById("message").addEventListener(
+    "keydown", function(event) {
+        if (event.key === "Enter") sendMessage();
+    }
+);
+</script>
+
+</body>
+</html>
+"""
+
+
+class LeahWebHandler(BaseHTTPRequestHandler):
+
+    def log_message(self, format_string, *args):
+        # Keep routine HTTP requests out of the terminal.
+        pass
+
+    def send_response_data(self, code, content, content_type):
+        encoded = content.encode("utf-8")
+
+        self.send_response(code)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def do_GET(self):
+        if self.path == "/":
+            self.send_response_data(
+                200, HTML_PAGE, "text/html; charset=utf-8"
+            )
+        else:
+            self.send_response_data(404, "Not found", "text/plain")
+
+    def do_POST(self):
+        if self.path != "/chat":
+            self.send_response_data(404, "Not found", "text/plain")
+            return
 
         try:
+            length = int(self.headers.get("Content-Length", "0"))
 
-            audio_process = subprocess.run(
-                ["aplay", "-q", OUTPUT_WAV],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                timeout=180
+            if length > 4096:
+                self.send_response_data(413, "Message too large", "text/plain")
+                return
+
+            body = self.rfile.read(length).decode("utf-8")
+            data = json.loads(body)
+
+            message = data.get("message", "").strip()
+
+            if not message:
+                reply = "Please send a message."
+            else:
+                save_message("user", message)
+                reply = ask_leah(message)
+                save_message("leah", reply)
+
+            result = json.dumps({"reply": reply})
+
+            self.send_response_data(
+                200, result, "application/json; charset=utf-8"
             )
 
-            if audio_process.returncode != 0:
+        except Exception:
+            self.send_response_data(
+                400, '{"reply":"Invalid request."}',
+                "application/json"
+            )
 
-                print("[AUDIO] Playback failed.")
-                print(audio_process.stderr.decode(
-                    "utf-8", errors="replace"
-                )[-500:])
 
-                return False
+def start_web_server():
+    try:
+        server = HTTPServer((WEB_HOST, WEB_PORT), LeahWebHandler)
 
-        finally:
+        thread = threading.Thread(
+            target=server.serve_forever
+        )
 
-            stop_animation(stop_event, animation_thread)
+        thread.daemon = True
+        thread.start()
 
-        return True
-
-    except subprocess.TimeoutExpired:
-
-        print("[AUDIO] Audio process timed out.")
-        return False
+        return server
 
     except Exception as error:
+        print(RED + "[WEB ERROR] " + str(error) + RESET)
+        return None
 
-        print("[AUDIO] Unexpected error:", error)
-        return False
+
+def get_local_ip():
+    try:
+        connection = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        connection.connect(("192.0.2.1", 80))
+        address = connection.getsockname()[0]
+        connection.close()
+        return address
+    except Exception:
+        return "Check your Pi's IP using hostname -I"
 
 
 # ============================================================
-# MAIN SYSTEM
+# HELP
+# ============================================================
+
+def show_help():
+    print(PURPLE + "\n========== LEAH COMMANDS ==========" + RESET)
+
+    commands = [
+        ("help", "Show available commands"),
+        ("status", "Show Pi system information"),
+        ("sentinel", "Inspect your local network"),
+        ("baseline", "Save your verified network baseline"),
+        ("note <text>", "Save a note"),
+        ("notes", "Display saved notes"),
+        ("task <text>", "Create a task"),
+        ("tasks", "Display tasks"),
+        ("done <number>", "Complete a task"),
+        ("history", "Display recent chat messages"),
+        ("clear", "Clear terminal display"),
+        ("web", "Display iPhone connection address"),
+        ("exit", "Close LEAH")
+    ]
+
+    for command, description in commands:
+        print(CYAN + command.ljust(20) + RESET + description)
+
+    print(PURPLE + "===================================" + RESET)
+
+
+def show_history():
+    history = load_json(CHAT_FILE, [])
+
+    print(PURPLE + "\n========== CHAT HISTORY ==========" + RESET)
+
+    for item in history[-20:]:
+        print(
+            "[{0}] {1}: {2}".format(
+                item["time"], item["role"], item["message"]
+            )
+        )
+
+
+# ============================================================
+# MAIN INTERFACE
 # ============================================================
 
 def main():
 
-    ensure_reference_image()
+    print(PURPLE)
+    print("==========================================")
+    print("             LEAH.OS v" + VERSION)
+    print("        PERSONAL ASSISTANT NODE")
+    print("==========================================")
+    print(RESET)
 
-    portrait_ascii = image_to_truecolor_blocks(
-        LOCAL_REF_PATH,
-        TARGET_WIDTH
-    )
+    print(CYAN + "LEAH neural core: ONLINE" + RESET)
 
-    idle_frame = generate_telemetry_frame(
-        portrait_ascii,
-        "LEAH.OS // NEURAL TELEMETRY NODE",
-        GREEN_ACCENT + "● ONLINE" + RESET,
-        "Awaiting operator prompt..."
-    )
+    if os.path.isfile(AVATAR_FILE):
+        print(GREEN + "Avatar asset detected." + RESET)
+    else:
+        print(YELLOW + "Avatar not installed yet." + RESET)
+        print("Place your portrait at:")
+        print(AVATAR_FILE)
 
-    clear_screen()
+    server = start_web_server()
 
-    print(idle_frame)
+    if server:
+        print(GREEN + "\nLEAH iPhone interface available at:" + RESET)
+        print("http://{0}:{1}".format(get_local_ip(), WEB_PORT))
 
-    print(
-        CYAN_ACCENT +
-        "\nLEAH.OS v3.5 // Local Terminal Interface" +
-        RESET
-    )
-
-    print(
-        AMBER_ACCENT +
-        "Type 'help' for commands or 'exit' to close.\n" +
-        RESET
-    )
+    print("\nType 'help' to see commands.")
+    print("Your messages will remain visible during the session.\n")
 
     while True:
 
         try:
-
             user_input = input(
-                AMBER_ACCENT +
-                BOLD +
-                "Operator > " +
-                RESET
-            ).strip()
+                AMBER if False else CYAN
+            )
 
-            if not user_input:
+            # The prompt is deliberately kept simple for old terminals.
+            if not user_input.strip():
                 continue
 
-            if user_input.lower() in ["exit", "quit"]:
+            command = user_input.strip()
+            lower = command.lower()
 
-                print(
-                    "\n" +
-                    MAGENTA_ACCENT +
-                    "[Closing session... Leah node offline.]" +
-                    RESET
-                )
-
+            if lower in ["exit", "quit"]:
+                print(PURPLE + "LEAH node shutting down." + RESET)
                 break
 
-            answer = ask_llm(
-                user_input,
-                portrait_ascii
-            )
+            elif lower == "help":
+                show_help()
 
-            clear_screen()
+            elif lower == "status":
+                display_status()
 
-            print(
-                CYAN_ACCENT +
-                BOLD +
-                "╔═[ LEAH TELEMETRY RESPONSE ]══════════════════════╗" +
-                RESET
-            )
+            elif lower in ["sentinel", "network"]:
+                sentinel_scan()
 
-            print()
+            elif lower == "baseline":
+                save_network_baseline()
 
-            typewriter_print(answer)
+            elif lower == "notes":
+                show_notes()
 
-            print()
+            elif lower == "tasks":
+                show_tasks()
 
-            print(
-                CYAN_ACCENT +
-                BOLD +
-                "╚══════════════════════════════════════════════════╝" +
-                RESET
-            )
+            elif lower == "history":
+                show_history()
 
-            print()
+            elif lower == "clear":
+                os.system("clear")
 
-            speak(answer, portrait_ascii)
+            elif lower == "web":
+                print(
+                    "Open http://{0}:{1} on your iPhone.".format(
+                        get_local_ip(), WEB_PORT
+                    )
+                )
 
-            clear_screen()
+            elif lower.startswith("note "):
+                add_note(command[5:].strip())
 
-            print(idle_frame)
+            elif lower.startswith("task "):
+                add_task(command[5:].strip())
+
+            elif lower.startswith("done "):
+                try:
+                    complete_task(int(command[5:].strip()))
+                except ValueError:
+                    print("Use: done 1")
+
+            else:
+                save_message("user", command)
+
+                reply = ask_leah(command)
+
+                save_message("leah", reply)
+
+                print("\n" + PURPLE + "LEAH ♡" + RESET)
+                print(reply + "\n")
 
         except KeyboardInterrupt:
-
-            print(
-                "\n" +
-                MAGENTA_ACCENT +
-                "[Session force-closed.]" +
-                RESET
-            )
-
-            break
+            print("\nUse 'exit' to close LEAH.")
 
         except EOFError:
-
-            print("\n[Input stream closed.]")
             break
 
         except Exception as error:
+            print(RED + "[SYSTEM ERROR] " + str(error) + RESET)
 
-            print("\n[LEAH SYSTEM ERROR]", error)
-
-    sys.stdout.write(RESET)
-    sys.stdout.flush()
+    if server:
+        server.shutdown()
+        server.server_close()
 
 
 if __name__ == "__main__":
