@@ -6,22 +6,20 @@ import subprocess
 from PIL import Image, ImageEnhance
 
 # =====================================================================
-# SYSTEM & HARDWARE CONFIGURATION
+# SYSTEM & HARDWARE CONFIGURATION (32-Bit Compatible)
 # =====================================================================
 PIPER_MODEL = "en_US-amy-medium.onnx"
 LOCAL_REF_PATH = os.path.expanduser("~/Leah/leah_ref.jpg")
 
-SYSTEM_PROMPT = (
-    "Your name is Leah. You are an advanced, razor-sharp AI security operative "
-    "and system analyst running locally on a Raspberry Pi node. Your tone is technical, "
-    "composed, and precise. Keep responses direct and punchy."
-)
+# Handle Pillow resampling attribute variation across older/newer versions
+try:
+    RESAMPLE_METHOD = Image.Resampling.LANCZOS
+except AttributeError:
+    RESAMPLE_METHOD = Image.ANTIALIAS
 
-# =====================================================================
-# 24-BIT TRUECOLOR ANSI & BLOCK GRAPHICS ENGINE
-# =====================================================================
 def rgb_ansi_fg(r, g, b):
-    return f"\033[38;2;{r};{g};{b}m"
+    # Safe string concatenation for older Python versions on 32-bit OS
+    return "\033[38;2;" + str(r) + ";" + str(g) + ";" + str(b) + "m"
 
 RESET = "\033[0m"
 BOLD = "\033[1m"
@@ -33,28 +31,30 @@ GREEN_ACCENT = "\033[38;2;0;255;100m"
 def ensure_reference_image():
     """Generates a fallback reference if no custom image is found."""
     if not os.path.exists(LOCAL_REF_PATH):
-        img = Image.new("RGB", (300, 300), color=(5, 5, 10))
-        img.save(LOCAL_REF_PATH)
+        try:
+            img = Image.new("RGB", (300, 300), color=(5, 5, 10))
+            img.save(LOCAL_REF_PATH)
+        except Exception:
+            pass
 
 def image_to_truecolor_blocks(image_path, target_width=72):
     """
     Renders reference portrait to a high-resolution 24-bit TrueColor Unicode 
-    block grid, preserving exact facial geometry, hair flow, eyes, mouth, 
-    and cybernetic eye details.
+    block grid, fully optimized for terminal display.
     """
     ensure_reference_image()
+    if not os.path.exists(image_path):
+        return "[Reference portrait not found]"
+        
     try:
         img = Image.open(image_path).convert("RGB")
-        
-        # Preprocessing pass to sharpen lines and boost contrast
         img = ImageEnhance.Contrast(img).enhance(1.6)
         img = ImageEnhance.Sharpness(img).enhance(1.7)
         
         w, h = img.size
-        # Correct for ~2:1 terminal font character aspect ratio
         target_height = int(target_width * (h / float(w)) * 0.48)
         
-        img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
+        img = img.resize((target_width, target_height), RESAMPLE_METHOD)
         pixels = img.load()
 
         lines = []
@@ -66,24 +66,19 @@ def image_to_truecolor_blocks(image_path, target_width=72):
                 r, g, b = pixels[x, y]
                 brightness = int(0.299 * r + 0.587 * g + 0.114 * b)
                 
-                # Filter background out to preserve negative space
                 if brightness < 12:
                     line_str += " "
                     continue
 
                 block_idx = min(int((brightness / 255.0) * len(blocks)), len(blocks) - 2)
                 char = blocks[block_idx]
-                
-                line_str += f"{rgb_ansi_fg(r, g, b)}{char}"
+                line_str += rgb_ansi_fg(r, g, b) + char
             lines.append(line_str + RESET)
 
         return "\n".join(lines)
     except Exception as e:
         return f"[Error rendering block portrait: {e}]"
 
-# =====================================================================
-# TELEMETRY HUD & FRAME LAYOUTS
-# =====================================================================
 def generate_telemetry_frame(portrait_ascii, title, status_text, sys_info=""):
     lines = []
     lines.append(f"{MAGENTA_ACCENT}╔═════════════════════════════════════════════════════════════════════════════════════════════════╗{RESET}")
@@ -92,13 +87,13 @@ def generate_telemetry_frame(portrait_ascii, title, status_text, sys_info=""):
     
     portrait_lines = portrait_ascii.split("\n") if portrait_ascii else []
     hud_info = [
-        f"{CYAN_ACCENT}[NODE]{RESET}        :: Pi-Local (Security Operative)",
-        f"{CYAN_ACCENT}[IDENT]{RESET}       :: Leah (v3.4 Neural Core)",
+        f"{CYAN_ACCENT}[NODE]{RESET}        :: Pi-Local (32-Bit ARMv7)",
+        f"{CYAN_ACCENT}[IDENT]{RESET}       :: Leah (v3.5 Neural Core)",
         f"{CYAN_ACCENT}[SYSTEM]{RESET}      :: {sys_info}",
-        f"{CYAN_ACCENT}[PORTRAIT]{RESET}    :: 24-Bit TrueColor Mousepad Art Fidelity",
+        f"{CYAN_ACCENT}[PORTRAIT]{RESET}    :: 24-Bit TrueColor Unicode Matrix",
         f"{CYAN_ACCENT}[EYE IMPLANT]{RESET} :: Cyan Circuitry / Glitch Sync Active",
         f"{CYAN_ACCENT}[ENCRYPTION]{RESET} :: AES-256 GCM Secure",
-        f"{CYAN_ACCENT}[STATUS]{RESET}     :: Online (32-Bit Local Engine)"
+        f"{CYAN_ACCENT}[STATUS]{RESET}     :: Online (Offline Fallback Ready)"
     ]
     
     for i, p_line in enumerate(portrait_lines):
@@ -108,9 +103,6 @@ def generate_telemetry_frame(portrait_ascii, title, status_text, sys_info=""):
     lines.append(f"{MAGENTA_ACCENT}╚═════════════════════════════════════════════════════════════════════════════════════════════════╝{RESET}")
     return "\n".join(lines)
 
-# =====================================================================
-# ANIMATION & STREAMING CONTROLLERS
-# =====================================================================
 def animate_screen(stop_event, frame_func, speed=0.25):
     idx = 0
     while not stop_event.is_set():
@@ -127,9 +119,6 @@ def typewriter_print(text, speed=0.015):
         time.sleep(speed)
     print()
 
-# =====================================================================
-# CORE AI LOGIC (OFFLINE ENGINE + PIPER TTS)
-# =====================================================================
 def ask_llm(prompt, portrait_ascii):
     def get_typing_frame(i):
         states = ["Parsing input vectors...", "Querying neural core...", "Compiling response matrix..."]
@@ -144,8 +133,7 @@ def ask_llm(prompt, portrait_ascii):
     anim_thread = threading.Thread(target=animate_screen, args=(stop_anim, get_typing_frame, 0.25))
     anim_thread.start()
     
-    # Simulate processing delay for terminal animation
-    time.sleep(1.2)
+    time.sleep(1.0)
     
     prompt_lower = prompt.lower()
     if any(k in prompt_lower for k in ["creator", "who made you", "who created you"]):
@@ -164,30 +152,30 @@ def ask_llm(prompt, portrait_ascii):
 
 def speak(text, portrait_ascii):
     clean_text = text.replace('"', '').replace("'", "")
-    os.system(f'echo "{clean_text}" | piper -m {PIPER_MODEL} --output_file response.wav > /dev/null 2>&1')
-    
-    if os.path.exists("response.wav"):
-        def get_talking_frame(i):
-            waves = ["░▒▓ ░▒▓ ░▒▓", "▓▒░ ▓▒░ ▓▒░"]
-            return generate_telemetry_frame(
-                portrait_ascii, 
-                "LEAH.OS // AUDIO TRANSMISSION", 
-                f"{GREEN_ACCENT}🔊 SPEAKING [{waves[i%2]}]{RESET}",
-                "Piper ONNX 22050Hz PCM Output"
-            )
-
-        stop_anim = threading.Event()
-        anim_thread = threading.Thread(target=animate_screen, args=(stop_anim, get_talking_frame, 0.15))
-        anim_thread.start()
+    try:
+        os.system(f'echo "{clean_text}" | piper -m {PIPER_MODEL} --output_file response.wav > /dev/null 2>&1')
         
-        subprocess.run(["aplay", "-q", "response.wav"])
-        
-        stop_anim.set()
-        anim_thread.join()
+        if os.path.exists("response.wav"):
+            def get_talking_frame(i):
+                waves = ["░▒▓ ░▒▓ ░▒▓", "▓▒░ ▓▒░ ▓▒░"]
+                return generate_telemetry_frame(
+                    portrait_ascii, 
+                    "LEAH.OS // AUDIO TRANSMISSION", 
+                    f"{GREEN_ACCENT}🔊 SPEAKING [{waves[i%2]}]{RESET}",
+                    "Piper ONNX 22050Hz PCM Output"
+                )
 
-# =====================================================================
-# MAIN RUNTIME LOOP
-# =====================================================================
+            stop_anim = threading.Event()
+            anim_thread = threading.Thread(target=animate_screen, args=(stop_anim, get_talking_frame, 0.15))
+            anim_thread.start()
+            
+            subprocess.run(["aplay", "-q", "response.wav"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            stop_anim.set()
+            anim_thread.join()
+    except Exception:
+        pass # Fail-safe if audio utilities are missing
+
 if __name__ == "__main__":
     ensure_reference_image()
     portrait_ascii = image_to_truecolor_blocks(LOCAL_REF_PATH, target_width=72)
