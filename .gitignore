@@ -1,11 +1,12 @@
-# Personal information
-data/
-*.log
-*.db
-*.sqlite
+# Private data
+data/*
+!data/.gitkeep
 
-# AI models
-models/
+# AI models and voice files
+models/*
+!models/.gitkeep
+voices/*
+!voices/.gitkeep
 *.gguf
 *.onnx
 *.pt
@@ -18,12 +19,20 @@ models/
 
 # Python
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
 venv/
 .env/
+
+# Logs and databases
+*.log
+*.db
+*.sqlite
+*.sqlite3
 
 # Temporary files
 *.tmp
 *.part
 .DS_Store
+
+# Local backups
+backups/
