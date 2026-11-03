@@ -1,30 +1,23 @@
-
 #!/usr/bin/env bash
 
 set -Eeuo pipefail
 
 # ============================================================
-# LEAH.OS // LOCAL LLM AUTO-COMPILER
-# Raspberry Pi / ARMv7 / 32-Bit Linux
+# LEAH.OS v2.0
+# Raspberry Pi 3 Model B / Raspbian Stretch
+# Core Assistant Installer
 # ============================================================
 
-VERSION="1.1"
+VERSION="2.0"
 
 LEAH_DIR="$HOME/Leah"
-LLAMA_DIR="$HOME/llama.cpp"
-BUILD_DIR="$LLAMA_DIR/build"
+DATA_DIR="$LEAH_DIR/data"
+ASSET_DIR="$LEAH_DIR/assets"
 MODEL_DIR="$LEAH_DIR/models"
+VOICE_DIR="$LEAH_DIR/voices"
 
-MODEL_NAME="qwen2.5-0.5b-instruct-q4_k_m.gguf"
-
-MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/$MODEL_NAME"
-
-MODEL_PATH="$MODEL_DIR/$MODEL_NAME"
-
-LLAMA_BINARY="$BUILD_DIR/bin/llama-cli"
-
-# Default to one job to conserve Raspberry Pi RAM.
-JOBS="${LEAH_BUILD_JOBS:-1}"
+ASSISTANT="$LEAH_DIR/assistant.py"
+LAUNCHER="$LEAH_DIR/run_leah.sh"
 
 # ============================================================
 # ERROR HANDLING
@@ -33,21 +26,18 @@ JOBS="${LEAH_BUILD_JOBS:-1}"
 error_exit() {
     echo
     echo "[ERROR] $1"
-    echo "[ERROR] Installation aborted."
     exit 1
 }
 
-trap 'error_exit "Command failed on line $LINENO."' ERR
+trap 'error_exit "Installation failed on line $LINENO."' ERR
 
 # ============================================================
 # STARTUP
 # ============================================================
 
-clear || true
-
-echo "=========================================================="
-echo " LEAH.OS // LOCAL LLM AUTO-COMPILER v$VERSION"
-echo "=========================================================="
+echo "================================================"
+echo " LEAH.OS // CORE INSTALLER v$VERSION"
+echo "================================================"
 
 echo "[*] Detecting hardware..."
 
@@ -55,212 +45,120 @@ ARCH=$(uname -m)
 BITS=$(getconf LONG_BIT)
 
 echo "[+] Architecture: $ARCH"
-echo "[+] Operating system: $BITS-bit"
+echo "[+] System: $BITS-bit"
 
-if [[ "$BITS" != "32" ]]; then
-    echo "[WARNING] This installer was configured for 32-bit Linux."
+if ! command -v python3 >/dev/null 2>&1; then
+    error_exit "Python 3 is not installed."
 fi
 
-if [[ "$ARCH" != "armv7l" && "$ARCH" != "armv6l" ]]; then
-    echo "[WARNING] Architecture differs from expected ARMv7."
-fi
+PYTHON_VERSION=$(python3 --version)
 
-if [[ ! "$JOBS" =~ ^[1-9][0-9]*$ ]]; then
-    error_exit "LEAH_BUILD_JOBS must be a positive integer."
-fi
-
-echo "[+] Compilation jobs: $JOBS"
+echo "[+] Python: $PYTHON_VERSION"
 
 # ============================================================
-# INSTALL DEPENDENCIES
+# DIRECTORY STRUCTURE
 # ============================================================
 
 echo
-echo "[*] Installing build dependencies..."
+echo "[*] Creating LEAH directory structure..."
 
-sudo apt-get update
-
-sudo apt-get install -y \
-    build-essential \
-    cmake \
-    git \
-    curl \
-    wget \
-    pkg-config
-
-# ============================================================
-# CREATE LEAH DIRECTORIES
-# ============================================================
-
-echo
-echo "[*] Preparing LEAH directories..."
-
-mkdir -p "$LEAH_DIR"
+mkdir -p "$DATA_DIR"
+mkdir -p "$ASSET_DIR"
 mkdir -p "$MODEL_DIR"
+mkdir -p "$VOICE_DIR"
 
 # ============================================================
-# CLONE OR UPDATE LLAMA.CPP
+# CHECK ASSISTANT FILE
+# ============================================================
+
+if [[ ! -f "$ASSISTANT" ]]; then
+    error_exit "assistant.py not found in $LEAH_DIR"
+fi
+
+echo "[+] assistant.py detected."
+
+# ============================================================
+# PYTHON SYNTAX CHECK
 # ============================================================
 
 echo
-echo "[*] Preparing llama.cpp..."
+echo "[*] Checking Python syntax..."
 
-if [[ ! -d "$LLAMA_DIR/.git" ]]; then
+python3 -m py_compile "$ASSISTANT"
 
-    if [[ -e "$LLAMA_DIR" ]]; then
-        error_exit "$LLAMA_DIR exists but is not a Git repository."
-    fi
+echo "[+] Python syntax check passed."
 
-    echo "[*] Cloning llama.cpp..."
+# ============================================================
+# OPTIONAL PILLOW CHECK
+# ============================================================
 
-    git clone \
-        --depth 1 \
-        https://github.com/ggml-org/llama.cpp.git \
-        "$LLAMA_DIR"
+echo
+echo "[*] Checking optional Pillow dependency..."
 
+if python3 -c "from PIL import Image" >/dev/null 2>&1; then
+    echo "[+] Pillow available."
 else
-
-    echo "[*] Existing llama.cpp repository detected."
-
-    cd "$LLAMA_DIR"
-
-    echo "[*] Updating repository..."
-
-    git pull --ff-only
-
+    echo "[WARNING] Pillow not detected."
+    echo "[WARNING] Portrait rendering will need Pillow."
+    echo "[WARNING] No package installation attempted."
 fi
 
 # ============================================================
-# CONFIGURE CMAKE
+# CREATE LAUNCHER
 # ============================================================
 
 echo
-echo "[*] Configuring ARM-compatible build..."
+echo "[*] Creating LEAH launcher..."
 
-cmake \
-    -S "$LLAMA_DIR" \
-    -B "$BUILD_DIR" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DGGML_NATIVE=OFF \
-    -DGGML_OPENMP=OFF
+cat > "$LAUNCHER" <<'EOF'
+#!/usr/bin/env bash
 
-# ============================================================
-# COMPILE LLAMA.CPP
-# ============================================================
+set -e
 
-echo
-echo "=========================================================="
-echo "[*] COMPILING LLAMA.CPP"
-echo "[*] This may take a while on Raspberry Pi."
-echo "=========================================================="
+LEAH_DIR="$HOME/Leah"
 
-cmake \
-    --build "$BUILD_DIR" \
-    --target llama-cli \
-    --config Release \
-    --parallel "$JOBS"
+cd "$LEAH_DIR"
+
+python3 assistant.py
+EOF
+
+chmod +x "$LAUNCHER"
 
 # ============================================================
-# VERIFY EXECUTABLE
+# PERMISSIONS
+# ============================================================
+
+chmod 700 "$DATA_DIR"
+
+# ============================================================
+# FINAL REPORT
 # ============================================================
 
 echo
-echo "[*] Verifying llama-cli..."
+echo "================================================"
+echo " LEAH.OS // CORE INSTALLATION COMPLETE"
+echo "================================================"
 
-if [[ ! -x "$LLAMA_BINARY" ]]; then
-    error_exit "llama-cli executable was not generated."
-fi
-
-"$LLAMA_BINARY" --version
-
-# ============================================================
-# DOWNLOAD QUANTIZED MODEL
-# ============================================================
-
-echo
-echo "[*] Checking Qwen2.5 0.5B model..."
-
-if [[ -f "$MODEL_PATH" ]]; then
-
-    echo "[+] Existing model detected."
-
-else
-
-    echo "[*] Downloading Qwen2.5 0.5B Instruct Q4_K_M..."
-
-    TEMP_MODEL="${MODEL_PATH}.part"
-
-    rm -f "$TEMP_MODEL"
-
-    curl \
-        --fail \
-        --location \
-        --retry 3 \
-        --retry-all-errors \
-        --connect-timeout 20 \
-        --progress-bar \
-        "$MODEL_URL" \
-        --output "$TEMP_MODEL"
-
-    # Check minimum file size.
-    FILE_SIZE=$(stat -c%s "$TEMP_MODEL")
-
-    if [[ "$FILE_SIZE" -lt 10000000 ]]; then
-        rm -f "$TEMP_MODEL"
-        error_exit "Downloaded model is suspiciously small."
-    fi
-
-    # Verify GGUF file signature.
-    MAGIC=$(od -An -t x1 -N4 "$TEMP_MODEL" | tr -d ' \n')
-
-    if [[ "$MAGIC" != "47475546" ]]; then
-        rm -f "$TEMP_MODEL"
-        error_exit "Invalid GGUF model file signature."
-    fi
-
-    mv "$TEMP_MODEL" "$MODEL_PATH"
-
-    echo "[+] Model download verified."
-
-fi
-
-# ============================================================
-# FINAL INSTALLATION CHECK
-# ============================================================
+echo "[+] Architecture: $ARCH"
+echo "[+] Python: $PYTHON_VERSION"
+echo "[+] Core assistant: Installed"
+echo "[+] Data directory: $DATA_DIR"
+echo "[+] Assets directory: $ASSET_DIR"
+echo "[+] Models directory: $MODEL_DIR"
+echo "[+] Voices directory: $VOICE_DIR"
+echo "[+] Launcher: $LAUNCHER"
 
 echo
-echo "=========================================================="
-echo " LEAH.OS // INSTALLATION COMPLETE"
-echo "=========================================================="
-
-echo "[+] Architecture: $ARCH ($BITS-bit)"
-echo "[+] Compiler: CMake / GCC"
-echo "[+] Backend: llama.cpp"
-echo "[+] Model: Qwen2.5 0.5B Instruct"
-echo "[+] Quantization: Q4_K_M"
+echo "To launch LEAH:"
+echo
+echo "  ~/Leah/run_leah.sh"
 
 echo
-echo "[+] Executable:"
-echo "$LLAMA_BINARY"
+echo "LLM installation has deliberately been postponed."
+echo "No APT repositories were modified."
+echo "No existing model files were deleted."
 
 echo
-echo "[+] Model:"
-echo "$MODEL_PATH"
-
-echo
-echo "=========================================================="
-echo " LEAH.OS // READY FOR INFERENCE"
-echo "=========================================================="
-
-echo
-echo "[*] To launch Leah's local AI engine, run:"
-
-echo
-echo "\"$LLAMA_BINARY\" \\"
-echo "  -m \"$MODEL_PATH\" \\"
-echo "  -cnv \\"
-echo "  -c 1024 \\"
-echo "  -n 256"
-
-echo
-echo "[*] Installation finished."
+echo "================================================"
+echo " LEAH.OS // READY"
+echo "================================================"
