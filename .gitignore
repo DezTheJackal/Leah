@@ -1,0 +1,30 @@
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# AI models - never upload model weights
+models/
+*.gguf
+*.onnx
+
+# Audio output
+*.wav
+*.mp3
+
+# Logs and temporary files
+logs/
+*.log
+*.tmp
+*.part
+
+# Local configuration
+.env
+config/config.json
+
+# Operating system
+.DS_Store
+Thumbs.db
