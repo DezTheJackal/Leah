@@ -1,30 +1,29 @@
+# Personal information
+data/
+*.log
+*.db
+*.sqlite
 
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-venv/
-
-# AI models - never upload model weights
+# AI models
 models/
 *.gguf
 *.onnx
+*.pt
+*.pth
 
-# Audio output
+# Audio
 *.wav
 *.mp3
+*.ogg
 
-# Logs and temporary files
-logs/
-*.log
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.env/
+
+# Temporary files
 *.tmp
 *.part
-
-# Local configuration
-.env
-config/config.json
-
-# Operating system
 .DS_Store
-Thumbs.db
