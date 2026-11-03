@@ -49,7 +49,7 @@ NOTES_FILE = os.path.join(DATA_DIR, "notes.json")
 TASKS_FILE = os.path.join(DATA_DIR, "tasks.json")
 BASELINE_FILE = os.path.join(DATA_DIR, "network_baseline.json")
 
-AVATAR_FILE = os.path.join(ASSET_DIR, "leah_avatar.jpg")
+AVATAR_FILE = os.path.join(ASSET_DIR, "leah_avatar.png")
 
 WEB_HOST = "0.0.0.0"
 WEB_PORT = 8080
